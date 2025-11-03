@@ -634,8 +634,8 @@ static TWO: Lazy<BigUint> = Lazy::new(|| BigUint::from(2_u8));
 #[cfg(test)]
 mod tests {
     use super::{
-        gen_prime, gen_safe_prime, is_prime, is_prime_baillie_psw, is_safe_prime,
-        is_safe_prime_baillie_psw, PRIMES,
+        PRIMES, gen_prime, gen_safe_prime, is_prime, is_prime_baillie_psw, is_safe_prime,
+        is_safe_prime_baillie_psw,
     };
     use crate::error::Error;
     use num_bigint::BigUint;
