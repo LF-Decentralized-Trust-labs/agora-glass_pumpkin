@@ -20,7 +20,6 @@
 //! 3. Test the candidate with Fermat's Theorem.
 //! 4. Runs Baillie-PSW test with `log2(bits) + 5` Miller-Rabin tests
 
-#[cfg(test)]
 extern crate alloc;
 
 mod common;

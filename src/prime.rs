@@ -15,7 +15,7 @@ use crate::error::Result;
 /// Note: the `bit_length` MUST be at least 128-bits.
 #[cfg(feature = "getrandom")]
 pub fn new(bit_length: usize) -> Result {
-    from_rng(bit_length, &mut rand_core::OsRng)
+    from_rng(bit_length, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
 /// Test if number is prime by
@@ -26,13 +26,13 @@ pub fn new(bit_length: usize) -> Result {
 ///    depending on the number of bits
 #[cfg(feature = "getrandom")]
 pub fn check(candidate: &num_bigint::BigUint) -> bool {
-    check_with(candidate, &mut rand_core::OsRng)
+    check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
 /// Checks if number is a prime using the Baillie-PSW test
 #[cfg(feature = "getrandom")]
 pub fn strong_check(candidate: &num_bigint::BigUint) -> bool {
-    strong_check_with(candidate, &mut rand_core::OsRng)
+    strong_check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 [package]
 name = "glass_pumpkin"
-version = "1.9.0"
+version = "1.10.0"
 description = "A cryptographically secure prime number generator based on rust's own num-bigint and num-integer"
 keywords = ["prime", "big", "cryptography", "generator", "number"]
 license = "Apache-2.0"
@@ -12,16 +12,16 @@ readme = "README.md"
 edition = "2024"
 
 [dependencies]
-core2 = { version = "0.4", default-features = false }
-num-bigint = { version = "0.4", default-features = false, features = ["rand"] }
+num-bigint = { version = "0.4", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 num-integer = { version = "0.1", default-features = false }
-rand_core = { version = "0.6" }
+rand_core = { version = "0.10" }
+getrandom = { version = "0.4", optional = true, features = ["sys_rng"] }
 once_cell = { version = "1.21", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
-rand = "0.8"
+rand = "0.10"
 
 [[bench]]
 name = "gen_safe_prime"
@@ -34,7 +34,7 @@ opt-level = 3
 default = ["std", "getrandom"]
 std = ["once_cell/std"]
 # Enables methods that use `OsRng` internally
-getrandom = ["rand_core/getrandom"]
+getrandom = ["dep:getrandom"]
 # Enables compilation in `no_std` environment
 no_std = ["once_cell/critical-section"]
 

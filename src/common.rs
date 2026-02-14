@@ -1,18 +1,18 @@
-use num_bigint::{BigInt, BigUint, RandBigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::identities::{One, Zero};
 use num_traits::{Signed, ToPrimitive};
 
 use crate::error::{Error, Result};
-use crate::rand::Randoms;
+use crate::rand::{Randoms, gen_biguint, gen_biguint_range};
 use once_cell::sync::Lazy;
-use rand_core::RngCore;
+use rand_core::Rng;
 
 pub const MIN_BIT_LENGTH: usize = 128;
 
 /// Generate a new prime number with size `bit_length`, sourced
-/// from an already-initialized `RngCore`
-pub fn gen_prime<R: RngCore + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
+/// from an already-initialized `Rng`
+pub fn gen_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
     if bit_length < MIN_BIT_LENGTH {
         Err(Error::BitLength(bit_length))
     } else {
@@ -34,8 +34,8 @@ pub fn gen_prime<R: RngCore + ?Sized>(bit_length: usize, rng: &mut R) -> Result 
 }
 
 /// Generate a new safe prime number with size `bit_length`, sourced
-/// from an already-initialized `RngCore`.
-pub fn gen_safe_prime<R: RngCore + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
+/// from an already-initialized `Rng`.
+pub fn gen_safe_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
     if bit_length < MIN_BIT_LENGTH {
         Err(Error::BitLength(bit_length))
     } else {
@@ -71,7 +71,7 @@ pub fn gen_safe_prime<R: RngCore + ?Sized>(bit_length: usize, rng: &mut R) -> Re
 }
 
 /// Checks if number is a prime using the Baillie-PSW test
-pub fn is_prime_baillie_psw<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
+pub fn is_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
     _is_prime(
         candidate,
         required_checks(candidate.bits() as usize),
@@ -82,7 +82,7 @@ pub fn is_prime_baillie_psw<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut 
 }
 
 /// Checks if number is a safe prime using the Baillie-PSW test
-pub fn is_safe_prime_baillie_psw<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
+pub fn is_safe_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
     _is_safe_prime(
         candidate,
         required_checks(candidate.bits() as usize),
@@ -92,7 +92,7 @@ pub fn is_safe_prime_baillie_psw<R: RngCore + ?Sized>(candidate: &BigUint, rng: 
 }
 
 /// Checks if number is a safe prime
-pub fn is_safe_prime<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
+pub fn is_safe_prime<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
     _is_safe_prime(
         candidate,
         required_checks(candidate.bits() as usize),
@@ -102,7 +102,7 @@ pub fn is_safe_prime<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> b
 }
 
 /// Common function for `is_safe_prime`
-fn _is_safe_prime<R: RngCore + ?Sized>(
+fn _is_safe_prime<R: Rng + ?Sized>(
     candidate: &BigUint,
     checks: usize,
     force2: bool,
@@ -127,7 +127,7 @@ fn _is_safe_prime<R: RngCore + ?Sized>(
 /// 2- Perform a Fermat Test
 /// 3- Perform log2(bitlength) + 5 rounds of Miller-Rabin
 ///    depending on the number of bits
-pub fn is_prime<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
+pub fn is_prime<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
     _is_prime(
         candidate,
         required_checks(candidate.bits() as usize),
@@ -138,7 +138,7 @@ pub fn is_prime<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
 }
 
 /// Common function for `is_prime`
-fn _is_prime<R: RngCore + ?Sized>(
+fn _is_prime<R: Rng + ?Sized>(
     candidate: &BigUint,
     checks: usize,
     force2: bool,
@@ -168,8 +168,8 @@ fn _is_prime<R: RngCore + ?Sized>(
 
 /// Generate a random candidate uint of the requested bit length
 #[inline]
-fn _prime_candidate<R: RngCore + ?Sized>(bit_length: u64, rng: &mut R) -> BigUint {
-    let mut candidate = rng.gen_biguint(bit_length);
+fn _prime_candidate<R: Rng + ?Sized>(bit_length: u64, rng: &mut R) -> BigUint {
+    let mut candidate = gen_biguint(rng, bit_length);
 
     // Set lowest bit (ensure odd)
     candidate.set_bit(0, true);
@@ -185,17 +185,27 @@ fn _prime_candidate<R: RngCore + ?Sized>(bit_length: u64, rng: &mut R) -> BigUin
     candidate
 }
 
+/// Compute `n mod m` from the little-endian u32 digits of `n`, without allocating.
 #[inline]
-fn _is_prime_basic<R: RngCore + ?Sized>(candidate: &BigUint, q_check: bool, rng: &mut R) -> bool {
-    let mut tmp = BigUint::zero();
+fn mod_u32(digits: &[u32], m: u32) -> u32 {
+    let m = m as u64;
+    let mut rem = 0u64;
+    for &d in digits.iter().rev() {
+        rem = ((rem << 32) | d as u64) % m;
+    }
+    rem as u32
+}
+
+#[inline]
+fn _is_prime_basic<R: Rng + ?Sized>(candidate: &BigUint, q_check: bool, rng: &mut R) -> bool {
+    let digits = candidate.to_u32_digits();
     for r in PRIMES.iter().copied() {
-        tmp.clone_from(candidate);
-        tmp %= r;
-        if tmp.is_zero() {
+        let rem = mod_u32(&digits, r);
+        if rem == 0 {
             return candidate.to_u32() == Some(r);
         }
         // When checking safe primes, eliminate q congruent to (r - 1) / 2 modulo r
-        if q_check && tmp.to_u32() == Some((r - 1) / 2) {
+        if q_check && rem == (r - 1) / 2 {
             return false;
         }
     }
@@ -212,8 +222,8 @@ fn required_checks(bits: usize) -> usize {
 /// Perform Fermat's little theorem on the candidate to determine probable
 /// primality.
 #[inline]
-fn fermat<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
-    let random = rng.gen_biguint_range(&BigUint::one(), candidate);
+fn fermat<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
+    let random = gen_biguint_range(rng, &BigUint::one(), candidate);
 
     let result = random.modpow(&(candidate - 1_u8), candidate);
 
@@ -221,24 +231,20 @@ fn fermat<R: RngCore + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
 }
 
 /// Perform miller rabin primality tests
-fn miller_rabin<R: RngCore + ?Sized>(
+fn miller_rabin<R: Rng + ?Sized>(
     candidate: &BigUint,
     limit: usize,
     force2: bool,
     rng: &mut R,
 ) -> bool {
     // Perform the Miller-Rabin test on the candidate, 'limit' times.
-    let (mut trials, d) = rewrite(candidate);
-    if trials < 5 {
-        trials = 5;
-    }
+    let (trials, d) = rewrite(candidate);
 
     let cand_minus_one = candidate - 1_u32;
 
-    let two = (*TWO).clone();
-    let bases = Randoms::new(two.clone(), candidate.clone(), limit, rng);
+    let bases = Randoms::new(&TWO, candidate, limit, rng);
     let bases = if force2 {
-        bases.with_appended(two.clone())
+        bases.with_appended((*TWO).clone())
     } else {
         bases
     };
@@ -249,8 +255,8 @@ fn miller_rabin<R: RngCore + ?Sized>(
         if test.is_one() || test == cand_minus_one {
             continue;
         }
-        for _ in 1..trials - 1 {
-            test = test.modpow(&two, candidate);
+        for _ in 1..trials {
+            test = (&test * &test) % candidate;
             if test.is_one() {
                 return false;
             } else if test == cand_minus_one {
@@ -267,7 +273,7 @@ fn miller_rabin<R: RngCore + ?Sized>(
 #[inline]
 fn rewrite(candidate: &BigUint) -> (u64, BigUint) {
     let mut d = candidate - 1_u32;
-    let trials = d.trailing_ones();
+    let trials = d.trailing_zeros().expect("n-1 is non-zero");
 
     if trials > 0 {
         d >>= trials;
@@ -365,23 +371,28 @@ fn lucas(n: &BigUint) -> bool {
     // We can therefore start with k=0 and build up to k=s in log₂(s) steps.
     let mut vk = (*TWO).clone();
     let mut vk1 = BigUint::from(p);
+    let n_minus_p = n - p;
 
     for i in (0..s.bits()).rev() {
-        let t1 = (&vk * &vk1) + n - p;
+        let mut t1 = (&vk * &vk1) + &n_minus_p;
         if s.bit(i) {
             // k' = 2k+1
             // V(k') = V(2k+1) = V(k) V(k+1) - P
-            vk = &t1 % n;
+            t1 %= n;
+            vk = t1;
             // V(k'+1) = V(2k+2) = V(k+1)² - 2
-            let t1 = (&vk1 * &vk1) + &nm2;
-            vk1 = &t1 % n;
+            let mut t1 = (&vk1 * &vk1) + &nm2;
+            t1 %= n;
+            vk1 = t1;
         } else {
             // k' = 2k
             // V(k'+1) = V(2k+1) = V(k) V(k+1) - P
-            vk1 = &t1 % n;
+            t1 %= n;
+            vk1 = t1;
             // V(k') = V(2k) = V(k)² - 2
-            let t1 = (&vk * &vk) + &nm2;
-            vk = &t1 % n;
+            let mut t1 = (&vk * &vk) + &nm2;
+            t1 %= n;
+            vk = t1;
         }
     }
 
@@ -403,7 +414,8 @@ fn lucas(n: &BigUint) -> bool {
 
         t1 -= t2;
 
-        if (t1 % n).is_zero() {
+        t1 %= n;
+        if t1.is_zero() {
             return true;
         }
     }
@@ -422,8 +434,8 @@ fn lucas(n: &BigUint) -> bool {
 
         // k' = 2k
         // V(k') = V(2k) = V(k)² - 2
-        let t1 = (&vk * &vk) - 2_u32;
-        vk = &t1 % n;
+        vk = (&vk * &vk) - 2_u32;
+        vk %= n;
     }
 
     false
@@ -443,8 +455,6 @@ fn jacobi(x: &BigInt, y: &BigInt) -> isize {
     let mut a = x.clone();
     let mut b = y.clone();
     let mut j = 1;
-    let three = BigInt::from(3);
-    let seven = BigInt::from(7);
 
     if b.is_negative() {
         if a.is_negative() {
@@ -471,7 +481,7 @@ fn jacobi(x: &BigInt, y: &BigInt) -> isize {
 
         // handle factors of 2 in a
         if s & 1 != 0 {
-            let bmod8 = (&b & &seven).to_u64().unwrap();
+            let bmod8 = b.iter_u32_digits().next().unwrap_or(0) & 7;
             if bmod8 == 3 || bmod8 == 5 {
                 j = -j;
             }
@@ -480,7 +490,9 @@ fn jacobi(x: &BigInt, y: &BigInt) -> isize {
         let c = &a >> s; // a = 2^s*c
 
         // swap numerator and denominator
-        if (&b & &c & &three) == three {
+        let b_low = b.iter_u32_digits().next().unwrap_or(0);
+        let c_low = c.iter_u32_digits().next().unwrap_or(0);
+        if b_low & c_low & 3 == 3 {
             j = -j
         }
 
@@ -640,17 +652,14 @@ mod tests {
     use crate::error::Error;
     use num_bigint::BigUint;
     use num_traits::Num;
-    use rand::thread_rng;
+    use rand::rng;
 
     #[test]
     fn gen_safe_prime_tests() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         match gen_prime(16, &mut rng) {
             Ok(_) => panic!("No primes allowed under 16 bits"),
-            Err(e) => match e {
-                Error::BitLength(l) => assert_eq!(l, 16),
-                _ => panic!("Unexpected error"),
-            },
+            Err(Error::BitLength(l)) => assert_eq!(l, 16),
         };
 
         for bits in &[128, 256, 384, 512] {
@@ -662,13 +671,10 @@ mod tests {
 
     #[test]
     fn gen_prime_tests() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         match gen_prime(16, &mut rng) {
             Ok(_) => panic!("No primes allowed under 16 bits"),
-            Err(e) => match e {
-                Error::BitLength(l) => assert_eq!(l, 16),
-                _ => panic!("Unexpected error"),
-            },
+            Err(Error::BitLength(l)) => assert_eq!(l, 16),
         };
 
         for bits in &[256, 512, 1024, 2048] {
@@ -680,7 +686,7 @@ mod tests {
 
     #[test]
     fn is_prime_tests() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         for prime in PRIMES.iter().copied() {
             assert!(is_prime(&BigUint::from(prime), &mut rng));
         }
@@ -743,5 +749,14 @@ mod tests {
             n += 1_u8;
             assert!(is_safe_prime(&n, &mut rng));
         }
+    }
+
+    // Regression test for https://github.com/LF-Decentralized-Trust-labs/agora-glass_pumpkin/issues/16
+    #[test]
+    fn issue_16_lucas_test_prime_not_flagged_as_composite() {
+        let mut rng = rng();
+        let n = BigUint::from(18_446_744_073_710_004_191_u128);
+        assert!(is_prime(&n, &mut rng));
+        assert!(is_prime_baillie_psw(&n, &mut rng));
     }
 }
