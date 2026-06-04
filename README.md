@@ -1,8 +1,6 @@
 # Glass Pumpkin
 
-[![Build Status](https://travis-ci.org/mikelodder7/glass_pumpkin.svg?branch=master)](https://travis-ci.org/mikelodder7/glass_pumpkin)
-[![Build status](https://ci.appveyor.com/api/projects/status/1htmp82mdvmfjjap?svg=true)](https://ci.appveyor.com/project/mikelodder7/glass-pumpkin)
-[![build status](https://gitlab.com/mikelodder7/glass_pumpkin/badges/master/pipeline.svg)]
+[![Build Status][build-image]][build-link]
 [![Crate][crate-image]][crate-link]
 [![Docs][docs-image]][docs-link]
 ![Apache 2.0/MIT Licensed][license-image]
@@ -98,6 +96,8 @@ This crate is part of the Hyperledger Labs Agora Project.
 
 [//]: # (badges)
 
+[build-image]: https://github.com/LF-Decentralized-Trust-labs/agora-glass_pumpkin/actions/workflows/glass_pumpkin.yml/badge.svg?branch=main
+[build-link]: https://github.com/LF-Decentralized-Trust-labs/agora-glass_pumpkin/actions/workflows/glass_pumpkin.yml
 [crate-image]: https://img.shields.io/crates/v/glass_pumpkin.svg
 [crate-link]: https://crates.io/crates/glass_pumpkin
 [docs-image]: https://docs.rs/glass_pumpkin/badge.svg
