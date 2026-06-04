@@ -19,7 +19,7 @@ than 200ms and safe primes about 10 seconds on modern hardware.
 # Installation
 Add the following to your `Cargo.toml` file:
 ```toml
-glass_pumpkin = "1.0"
+glass_pumpkin = "2.0"
 ```
 
 # Example
@@ -36,13 +36,13 @@ fn main() {
 }
 ```
 
-You can also supply `OsRng` and generate primes from that.
+You can also supply any RNG that implements `rand_core::Rng`.
 ```rust
 use glass_pumpkin::prime;
-use rand::rngs::OsRng;
+use rand::rng;
 
 fn main() {
-    let mut rng = OsRng;
+    let mut rng = rng();
     let p = prime::from_rng(1024, &mut rng).unwrap();
     let q = prime::from_rng(1024, &mut rng).unwrap();
 

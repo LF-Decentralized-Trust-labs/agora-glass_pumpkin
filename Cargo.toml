@@ -1,15 +1,15 @@
 [package]
-name = "glass_pumpkin"
-version = "1.10.0"
+authors = ["Michael Lodder <redmike7@gmail.com>"]
 description = "A cryptographically secure prime number generator based on rust's own num-bigint and num-integer"
+documentation = "https://docs.rs/glass_pumpkin"
+edition = "2024"
+homepage = "https://crates.io/crates/glass_pumpkin"
 keywords = ["prime", "big", "cryptography", "generator", "number"]
 license = "Apache-2.0"
-authors = ["Michael Lodder <redmike7@gmail.com>"]
-repository = "https://github.com/mikelodder7/glass_pumpkin"
-documentation = "https://docs.rs/glass_pumpkin"
-homepage = "https://crates.io/crates/glass_pumpkin"
+name = "glass_pumpkin"
 readme = "README.md"
-edition = "2024"
+repository = "https://github.com/mikelodder7/glass_pumpkin"
+version = "2.0.0-rc0"
 
 [dependencies]
 num-bigint = { version = "0.4", default-features = false }
@@ -33,7 +33,7 @@ opt-level = 3
 [features]
 default = ["std", "getrandom"]
 std = ["once_cell/std"]
-# Enables methods that use `OsRng` internally
+# Enables methods that use `getrandom::SysRng` internally
 getrandom = ["dep:getrandom"]
 # Enables compilation in `no_std` environment
 no_std = ["once_cell/critical-section"]

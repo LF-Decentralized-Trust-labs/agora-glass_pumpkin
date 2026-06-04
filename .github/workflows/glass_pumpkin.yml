@@ -98,6 +98,18 @@ jobs:
           toolchain: nightly
       - run: cargo doc --all-features
 
+  semver:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          baseline-rev: ${{ github.event.pull_request.base.sha }}
+          feature-group: all-features
+
   pants:
     runs-on: ubuntu-latest
     steps:
