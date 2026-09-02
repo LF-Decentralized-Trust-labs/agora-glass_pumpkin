@@ -21,21 +21,21 @@ pub fn new(bit_length: usize) -> Result {
 /// Test if number is prime by
 ///
 /// 1- Trial division by first 2048 primes
-/// 2- Perform a Fermat Test
-/// 3- Perform log2(bitlength) + 5 rounds of Miller-Rabin
+/// 2- Perform log2(bitlength) + 5 rounds of Miller-Rabin
 ///    depending on the number of bits
 #[cfg(feature = "getrandom")]
 pub fn check(candidate: &num_bigint::BigUint) -> bool {
     check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
-/// Checks if number is a prime using the Baillie-PSW test
+/// Checks if a number is probably prime using the deterministic-base
+/// Baillie-PSW test.
 #[cfg(feature = "getrandom")]
 pub fn strong_check(candidate: &num_bigint::BigUint) -> bool {
     strong_check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "getrandom"))]
 mod tests {
     use super::{check, new, strong_check};
 

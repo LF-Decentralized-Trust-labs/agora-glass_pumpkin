@@ -17,13 +17,12 @@
 //!
 //! 1. Generate a random odd number of a given bit-length.
 //! 2. Divide the candidate by the first 2048 prime numbers
-//! 3. Test the candidate with Fermat's Theorem.
-//! 4. Runs Baillie-PSW test with `log2(bits) + 5` Miller-Rabin tests
+//! 3. Run the Baillie-PSW test.
+//! 4. Run `log2(bits) + 4` additional Miller-Rabin tests.
 
 extern crate alloc;
 
 mod common;
 pub mod error;
 pub mod prime;
-mod rand;
 pub mod safe_prime;

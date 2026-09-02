@@ -25,13 +25,14 @@ pub fn check(candidate: &num_bigint::BigUint) -> bool {
     check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
-/// Checks if number is a safe prime using the Baillie-PSW test
+/// Checks if a number is probably a safe prime using the deterministic-base
+/// Baillie-PSW test on both the number and its Sophie Germain prime.
 #[cfg(feature = "getrandom")]
 pub fn strong_check(candidate: &num_bigint::BigUint) -> bool {
     strong_check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "getrandom"))]
 mod tests {
     use super::{check, new, strong_check};
 

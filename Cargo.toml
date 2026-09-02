@@ -12,12 +12,13 @@ repository = "https://github.com/mikelodder7/glass_pumpkin"
 version = "2.0.0-rc0"
 
 [dependencies]
-num-bigint = { version = "0.4", default-features = false }
+crypto-bigint = { version = "0.7", default-features = false, features = ["alloc"] }
+crypto-primes = { version = "0.7", default-features = false }
+num-bigint = { version = "0.5", default-features = false, features = ["rand_core_0_10"] }
 num-traits = { version = "0.2", default-features = false }
 num-integer = { version = "0.1", default-features = false }
 rand_core = { version = "0.10" }
 getrandom = { version = "0.4", optional = true, features = ["sys_rng"] }
-once_cell = { version = "1.21", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
@@ -32,11 +33,11 @@ opt-level = 3
 
 [features]
 default = ["std", "getrandom"]
-std = ["once_cell/std"]
+std = []
 # Enables methods that use `getrandom::SysRng` internally
 getrandom = ["dep:getrandom"]
 # Enables compilation in `no_std` environment
-no_std = ["once_cell/critical-section"]
+no_std = []
 
 [package.metadata.docs.rs]
 all-features = true

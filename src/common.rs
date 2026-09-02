@@ -1,11 +1,10 @@
-use num_bigint::{BigInt, BigUint, Sign};
+use crypto_bigint::{BoxedUint, Odd, Word};
+use crypto_primes::hazmat::{LucasCheck, SelfridgeBase, lucas_test};
+use num_bigint::{BigRng010, BigUint};
 use num_integer::Integer;
-use num_traits::identities::{One, Zero};
-use num_traits::{Signed, ToPrimitive};
+use num_traits::{One, ToPrimitive, Zero};
 
 use crate::error::{Error, Result};
-use crate::rand::{Randoms, gen_biguint, gen_biguint_range};
-use once_cell::sync::Lazy;
 use rand_core::Rng;
 
 pub const MIN_BIT_LENGTH: usize = 128;
@@ -23,9 +22,8 @@ pub fn gen_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
         loop {
             candidate = _prime_candidate(size, rng);
 
-            if _is_prime_basic(&candidate, false, rng)
-                && miller_rabin(&candidate, checks, true, rng)
-                && lucas(&candidate)
+            if passes_small_prime_sieve(&candidate, false)
+                && passes_generation_tests(&candidate, checks - 1, rng)
             {
                 return Ok(candidate);
             }
@@ -49,19 +47,17 @@ pub fn gen_safe_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result
             q = _prime_candidate(size_m1, rng);
 
             // Check that q is congruent to 2 mod 3
-            if (&q % 3u32).to_u64() == Some(2) {
+            if (&q % 3u32).to_u32() == Some(2) {
                 // Calculate p = 2q + 1
                 p.clone_from(&q);
                 p <<= 1;
                 p.set_bit(0, true);
 
                 // Check p is congruent to 2 mod 3, and check p and q are prime
-                if (&p % 3u32).to_u64() == Some(2)
-                    && _is_prime_basic(&q, true, rng)
-                    && _is_prime_basic(&p, false, rng)
-                    && miller_rabin(&q, checks, true, rng)
-                    && miller_rabin(&p, checks, true, rng)
-                    && lucas(&p)
+                if passes_small_prime_sieve(&q, true)
+                    && passes_small_prime_sieve(&p, false)
+                    && passes_generation_tests(&q, checks - 1, rng)
+                    && passes_generation_tests(&p, checks - 1, rng)
                 {
                     return Ok(p);
                 }
@@ -70,52 +66,41 @@ pub fn gen_safe_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result
     }
 }
 
-/// Checks if number is a prime using the Baillie-PSW test
-pub fn is_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
-    _is_prime(
-        candidate,
-        required_checks(candidate.bits() as usize),
-        true,
-        false,
-        rng,
-    ) && lucas(candidate)
+/// Checks if a number is probably prime using the deterministic-base
+/// Baillie-PSW test.
+///
+/// The RNG parameter is retained for API compatibility and is not consumed.
+pub fn is_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, _rng: &mut R) -> bool {
+    baillie_psw(candidate, false)
 }
 
-/// Checks if number is a safe prime using the Baillie-PSW test
-pub fn is_safe_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
-    _is_safe_prime(
-        candidate,
-        required_checks(candidate.bits() as usize),
-        true,
-        rng,
-    ) && lucas(candidate)
+/// Checks if a number is probably a safe prime using the deterministic-base
+/// Baillie-PSW test on both `candidate` and `(candidate - 1) / 2`.
+///
+/// The RNG parameter is retained for API compatibility and is not consumed.
+pub fn is_safe_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, _rng: &mut R) -> bool {
+    if (candidate % 3_u8).to_u8() != Some(2) {
+        return false;
+    }
+
+    let q = candidate >> 1;
+    baillie_psw(&q, true) && baillie_psw(candidate, false)
 }
 
 /// Checks if number is a safe prime
 pub fn is_safe_prime<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
-    _is_safe_prime(
-        candidate,
-        required_checks(candidate.bits() as usize),
-        false,
-        rng,
-    )
+    _is_safe_prime(candidate, required_checks(candidate.bits() as usize), rng)
 }
 
 /// Common function for `is_safe_prime`
-fn _is_safe_prime<R: Rng + ?Sized>(
-    candidate: &BigUint,
-    checks: usize,
-    force2: bool,
-    rng: &mut R,
-) -> bool {
+fn _is_safe_prime<R: Rng + ?Sized>(candidate: &BigUint, checks: usize, rng: &mut R) -> bool {
     // According to https://eprint.iacr.org/2003/186.pdf
     // a safe prime is congruent to 2 mod 3
-    if (candidate % 3u32).to_u64() == Some(2) {
+    if (candidate % 3_u8).to_u8() == Some(2) {
         // A safe prime satisfies (p-1)/2 is prime. Since a
         // prime is odd, We just need to divide by 2
         let p = &(candidate >> 1);
-        return _is_prime(p, checks, force2, true, rng)
-            && _is_prime(candidate, checks, force2, false, rng);
+        return _is_prime(p, checks, true, rng) && _is_prime(candidate, checks, false, rng);
     }
 
     false
@@ -124,14 +109,12 @@ fn _is_safe_prime<R: Rng + ?Sized>(
 /// Test if number is prime by
 ///
 /// 1- Trial division by first 2048 primes
-/// 2- Perform a Fermat Test
-/// 3- Perform log2(bitlength) + 5 rounds of Miller-Rabin
+/// 2- Perform log2(bitlength) + 5 rounds of Miller-Rabin
 ///    depending on the number of bits
 pub fn is_prime<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
     _is_prime(
         candidate,
         required_checks(candidate.bits() as usize),
-        false,
         false,
         rng,
     )
@@ -141,7 +124,6 @@ pub fn is_prime<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
 fn _is_prime<R: Rng + ?Sized>(
     candidate: &BigUint,
     checks: usize,
-    force2: bool,
     q_check: bool,
     rng: &mut R,
 ) -> bool {
@@ -153,13 +135,19 @@ fn _is_prime<R: Rng + ?Sized>(
         return false;
     }
 
-    if !_is_prime_basic(candidate, q_check, rng) {
+    if !passes_small_prime_sieve(candidate, q_check) {
         return false;
+    }
+    if candidate
+        .to_u32()
+        .is_some_and(|value| value <= *PRIMES.last().expect("the prime table is not empty"))
+    {
+        return true;
     }
 
     // Finally, do a Miller-Rabin test
     // See https://eprint.iacr.org/2018/749.pdf for good choices on appropriate number of tests
-    if !miller_rabin(candidate, checks, force2, rng) {
+    if !miller_rabin(candidate, checks, rng) {
         return false;
     }
 
@@ -169,48 +157,58 @@ fn _is_prime<R: Rng + ?Sized>(
 /// Generate a random candidate uint of the requested bit length
 #[inline]
 fn _prime_candidate<R: Rng + ?Sized>(bit_length: u64, rng: &mut R) -> BigUint {
-    let mut candidate = gen_biguint(rng, bit_length);
+    let mut candidate = rng.random_biguint(bit_length);
 
-    // Set lowest bit (ensure odd)
+    // Set the endpoints directly. This keeps every odd integer of the requested
+    // bit length equally likely; shifting short samples introduced bias.
     candidate.set_bit(0, true);
-    // Move left, setting the lowest bit until the size is sufficient
-    let diff = bit_length - candidate.bits();
-    if diff > 0 {
-        candidate <<= diff;
-        for bit in 0..diff {
-            candidate.set_bit(bit, true);
-        }
-    }
+    candidate.set_bit(bit_length - 1, true);
 
     candidate
 }
 
-/// Compute `n mod m` from the little-endian u32 digits of `n`, without allocating.
+/// Compute a small remainder through `num-bigint`'s public arithmetic traits.
 #[inline]
-fn mod_u32(digits: &[u32], m: u32) -> u32 {
-    let m = m as u64;
-    let mut rem = 0u64;
-    for &d in digits.iter().rev() {
-        rem = ((rem << 32) | d as u64) % m;
-    }
-    rem as u32
+fn rem_u32(n: &BigUint, modulus: u32) -> u32 {
+    (n % modulus)
+        .to_u32()
+        .expect("a remainder must fit in its modulus")
 }
 
 #[inline]
-fn _is_prime_basic<R: Rng + ?Sized>(candidate: &BigUint, q_check: bool, rng: &mut R) -> bool {
-    let digits = candidate.to_u32_digits();
-    for r in PRIMES.iter().copied() {
-        let rem = mod_u32(&digits, r);
-        if rem == 0 {
-            return candidate.to_u32() == Some(r);
-        }
-        // When checking safe primes, eliminate q congruent to (r - 1) / 2 modulo r
-        if q_check && rem == (r - 1) / 2 {
-            return false;
-        }
+fn passes_small_prime_sieve(candidate: &BigUint, q_check: bool) -> bool {
+    if let Some(small) = candidate.to_u32()
+        && small <= *PRIMES.last().expect("the prime table is not empty")
+    {
+        return small == 2 || PRIMES.binary_search(&small).is_ok();
     }
 
-    fermat(candidate, rng)
+    // Batch adjacent primes into the largest product that fits in a `u32`.
+    // This roughly halves the number of big-integer remainder operations while
+    // retaining the scalar fast path in `num-bigint`.
+    let mut start = 0;
+    while start < PRIMES.len() {
+        let mut product = 1_u32;
+        let mut end = start;
+        while end < PRIMES.len() {
+            let Some(next) = product.checked_mul(PRIMES[end]) else {
+                break;
+            };
+            product = next;
+            end += 1;
+        }
+
+        let batch_remainder = rem_u32(candidate, product);
+        for &prime in &PRIMES[start..end] {
+            let remainder = batch_remainder % prime;
+            if remainder == 0 || q_check && remainder == (prime - 1) / 2 {
+                return false;
+            }
+        }
+        start = end;
+    }
+
+    true
 }
 
 /// Minimum checks to be considered okay
@@ -219,288 +217,133 @@ fn required_checks(bits: usize) -> usize {
     (bits.checked_ilog2().unwrap_or(1) as usize) + 5
 }
 
-/// Perform Fermat's little theorem on the candidate to determine probable
-/// primality.
-#[inline]
-fn fermat<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool {
-    let random = gen_biguint_range(rng, &BigUint::one(), candidate);
-
-    let result = random.modpow(&(candidate - 1_u8), candidate);
-
-    result.is_one()
+/// Perform miller rabin primality tests
+fn miller_rabin<R: Rng + ?Sized>(candidate: &BigUint, limit: usize, rng: &mut R) -> bool {
+    MillerRabin::new(candidate).random_checks(limit, rng)
 }
 
-/// Perform miller rabin primality tests
-fn miller_rabin<R: Rng + ?Sized>(
-    candidate: &BigUint,
-    limit: usize,
-    force2: bool,
-    rng: &mut R,
-) -> bool {
-    // Perform the Miller-Rabin test on the candidate, 'limit' times.
-    let (trials, d) = rewrite(candidate);
+/// Perform a strong Miller-Rabin probable-prime test with one fixed base.
+#[cfg(test)]
+fn miller_rabin_base(candidate: &BigUint, basis: &BigUint) -> bool {
+    MillerRabin::new(candidate).check_base(basis)
+}
 
-    let cand_minus_one = candidate - 1_u32;
+/// Candidate-specific values shared by every Miller-Rabin base.
+struct MillerRabin<'a> {
+    candidate: &'a BigUint,
+    candidate_minus_one: BigUint,
+    odd_part: BigUint,
+    trials: u64,
+}
 
-    let bases = Randoms::new(&TWO, candidate, limit, rng);
-    let bases = if force2 {
-        bases.with_appended((*TWO).clone())
-    } else {
-        bases
-    };
-
-    'nextbasis: for basis in bases {
-        let mut test = basis.modpow(&d, candidate);
-
-        if test.is_one() || test == cand_minus_one {
-            continue;
+impl<'a> MillerRabin<'a> {
+    fn new(candidate: &'a BigUint) -> Self {
+        let candidate_minus_one = candidate - 1_u8;
+        let trials = candidate_minus_one
+            .trailing_zeros()
+            .expect("n-1 is non-zero");
+        let odd_part = &candidate_minus_one >> trials;
+        Self {
+            candidate,
+            candidate_minus_one,
+            odd_part,
+            trials,
         }
-        for _ in 1..trials {
-            test = (&test * &test) % candidate;
+    }
+
+    fn check_base(&self, basis: &BigUint) -> bool {
+        let mut test = basis.modpow(&self.odd_part, self.candidate);
+
+        if test.is_one() || test == self.candidate_minus_one {
+            return true;
+        }
+
+        for _ in 1..self.trials {
+            test = (&test * &test) % self.candidate;
+            if test == self.candidate_minus_one {
+                return true;
+            }
             if test.is_one() {
                 return false;
-            } else if test == cand_minus_one {
-                break 'nextbasis;
             }
         }
+
+        false
+    }
+
+    fn random_checks<R: Rng + ?Sized>(&self, limit: usize, rng: &mut R) -> bool {
+        // Sampling [0, n-3) and adding two produces exactly [2, n-1),
+        // without rebuilding that span for every base.
+        let basis_span = self.candidate - 3_u8;
+        for _ in 0..limit {
+            let basis = rng.random_biguint_below(&basis_span) + 2_u8;
+            if !self.check_base(&basis) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+/// Run the conventional Baillie-PSW probable-prime test.
+fn baillie_psw(candidate: &BigUint, q_check: bool) -> bool {
+    if candidate == &BigUint::from(2_u8) {
+        return true;
+    }
+    if candidate < &BigUint::from(2_u8) || candidate.is_even() {
         return false;
     }
+    if !passes_small_prime_sieve(candidate, q_check) {
+        return false;
+    }
+    if candidate
+        .to_u32()
+        .is_some_and(|value| value <= *PRIMES.last().expect("the prime table is not empty"))
+    {
+        return true;
+    }
 
-    true
+    baillie_psw_presieved(candidate)
 }
 
-/// Compute `d` and `trials`
-#[inline]
-fn rewrite(candidate: &BigUint) -> (u64, BigUint) {
-    let mut d = candidate - 1_u32;
-    let trials = d.trailing_zeros().expect("n-1 is non-zero");
-
-    if trials > 0 {
-        d >>= trials;
-    }
-
-    (trials, d)
+/// Run the two conventional BPSW components after small-factor screening:
+/// a strong base-2 Miller-Rabin test and a strong Lucas-Selfridge test.
+fn baillie_psw_presieved(candidate: &BigUint) -> bool {
+    let miller_rabin = MillerRabin::new(candidate);
+    miller_rabin.check_base(&BigUint::from(2_u8)) && strong_lucas_selfridge(candidate)
 }
 
-fn lucas(n: &BigUint) -> bool {
-    // Baillie-OEIS "method C" for choosing D, P, Q,
-    // as in https://oeis.org/A217719/a217719.txt:
-    // try increasing P ≥ 3 such that D = P² - 4 (so Q = 1)
-    // until Jacobi(D, n) = -1.
-    // The search is expected to succeed for non-square n after just a few trials.
-    // After more than expected failures, check whether n is square
-    // (which would cause Jacobi(D, n) = 1 for all D not dividing n).
-    let mut p = 3_u64;
-    let n_int = BigInt::from_biguint(Sign::Plus, n.clone());
-
-    loop {
-        if p > 10000 {
-            // This is widely believed to be impossible.
-            // If we get a report, we'll want the exact number n.
-            panic!("internal error: cannot find (D/n) = -1 for {:?}", n)
-        }
-
-        let j = jacobi(&BigInt::from(p * p - 4), &n_int);
-
-        if j == -1 {
-            break;
-        }
-        if j == 0 {
-            // d = p²-4 = (p-2)(p+2).
-            // If (d/n) == 0 then d shares a prime factor with n.
-            // Since the loop proceeds in increasing p and starts with p-2==1,
-            // the shared prime factor must be p+2.
-            // If p+2 == n, then n is prime; otherwise p+2 is a proper factor of n.
-            return n_int.to_u64() == Some(p + 2);
-        }
-
-        // We'll never find (d/n) = -1 if n is a square.
-        // If n is a non-square we expect to find a d in just a few attempts on average.
-        // After 40 attempts, take a moment to check if n is indeed a square.
-        if p == 40 && n_int.sqrt().pow(2) == n_int {
-            return false;
-        }
-
-        p += 1;
-    }
-
-    // Grantham definition of "extra strong Lucas pseudoprime", after Thm 2.3 on p. 876
-    // (D, P, Q above have become Δ, b, 1):
-    //
-    // Let U_n = U_n(b, 1), V_n = V_n(b, 1), and Δ = b²-4.
-    // An extra strong Lucas pseudoprime to base b is a composite n = 2^r s + Jacobi(Δ, n),
-    // where s is odd and gcd(n, 2*Δ) = 1, such that either (i) U_s ≡ 0 mod n and V_s ≡ ±2 mod n,
-    // or (ii) V_{2^t s} ≡ 0 mod n for some 0 ≤ t < r-1.
-    //
-    // We know gcd(n, Δ) = 1 or else we'd have found Jacobi(d, n) == 0 above.
-    // We know gcd(n, 2) = 1 because n is odd.
-    //
-    // Arrange s = (n - Jacobi(Δ, n)) / 2^r = (n+1) / 2^r.
-    let mut s = n + 1_u32;
-    let r = s.trailing_zeros().expect("s should be non-zero");
-    s >>= r;
-    let nm2 = n - 2_u32; // n - 2
-
-    // We apply the "almost extra strong" test, which checks the above conditions
-    // except for U_s ≡ 0 mod n, which allows us to avoid computing any U_k values.
-    // Jacobsen points out that maybe we should just do the full extra strong test:
-    // "It is also possible to recover U_n using Crandall and Pomerance equation 3.13:
-    // U_n = D^-1 (2V_{n+1} - PV_n) allowing us to run the full extra-strong test
-    // at the cost of a single modular inversion. This computation is easy and fast in GMP,
-    // so we can get the full extra-strong test at essentially the same performance as the
-    // almost extra strong test."
-
-    // Compute Lucas sequence V_s(b, 1), where:
-    //
-    //	V(0) = 2
-    //	V(1) = P
-    //	V(k) = P V(k-1) - Q V(k-2).
-    //
-    // (Remember that due to method C above, P = b, Q = 1.)
-    //
-    // In general V(k) = α^k + β^k, where α and β are roots of x² - Px + Q.
-    // Crandall and Pomerance (p.147) observe that for 0 ≤ j ≤ k,
-    //
-    //	V(j+k) = V(j)V(k) - V(k-j).
-    //
-    // So in particular, to quickly double the subscript:
-    //
-    //	V(2k) = V(k)² - 2
-    //	V(2k+1) = V(k) V(k+1) - P
-    //
-    // We can therefore start with k=0 and build up to k=s in log₂(s) steps.
-    let mut vk = (*TWO).clone();
-    let mut vk1 = BigUint::from(p);
-    let n_minus_p = n - p;
-
-    for i in (0..s.bits()).rev() {
-        let mut t1 = (&vk * &vk1) + &n_minus_p;
-        if s.bit(i) {
-            // k' = 2k+1
-            // V(k') = V(2k+1) = V(k) V(k+1) - P
-            t1 %= n;
-            vk = t1;
-            // V(k'+1) = V(2k+2) = V(k+1)² - 2
-            let mut t1 = (&vk1 * &vk1) + &nm2;
-            t1 %= n;
-            vk1 = t1;
-        } else {
-            // k' = 2k
-            // V(k'+1) = V(2k+1) = V(k) V(k+1) - P
-            t1 %= n;
-            vk1 = t1;
-            // V(k') = V(2k) = V(k)² - 2
-            let mut t1 = (&vk * &vk) + &nm2;
-            t1 %= n;
-            vk = t1;
-        }
-    }
-
-    // Now k=s, so vk = V(s). Check V(s) ≡ ±2 (mod n).
-    if vk.to_u64() == Some(2) || vk == nm2 {
-        // Check U(s) ≡ 0.
-        // As suggested by Jacobsen, apply Crandall and Pomerance equation 3.13:
-        //
-        //	U(k) = D⁻¹ (2 V(k+1) - P V(k))
-        //
-        // Since we are checking for U(k) == 0 it suffices to check 2 V(k+1) == P V(k) mod n,
-        // or P V(k) - 2 V(k+1) == 0 mod n.
-        let mut t1 = &vk * p;
-        let mut t2 = &vk1 << 1;
-
-        if t1 < t2 {
-            core::mem::swap(&mut t1, &mut t2);
-        }
-
-        t1 -= t2;
-
-        t1 %= n;
-        if t1.is_zero() {
-            return true;
-        }
-    }
-
-    // Check V(2^t s) ≡ 0 mod n for some 0 ≤ t < r-1.
-    for _ in 0..r - 1 {
-        if vk.is_zero() {
-            return true;
-        }
-
-        // Optimization: V(k) = 2 is a fixed point for V(k') = V(k)² - 2,
-        // so if V(k) = 2, we can stop: we will never find a future V(k) == 0.
-        if vk.to_u64() == Some(2) {
-            return false;
-        }
-
-        // k' = 2k
-        // V(k') = V(2k) = V(k)² - 2
-        vk = (&vk * &vk) - 2_u32;
-        vk %= n;
-    }
-
-    false
+/// Run BPSW and the requested additional random Miller-Rabin rounds while
+/// sharing the candidate decomposition between every base.
+fn passes_generation_tests<R: Rng + ?Sized>(
+    candidate: &BigUint,
+    random_checks: usize,
+    rng: &mut R,
+) -> bool {
+    let miller_rabin = MillerRabin::new(candidate);
+    miller_rabin.check_base(&BigUint::from(2_u8))
+        && strong_lucas_selfridge(candidate)
+        && miller_rabin.random_checks(random_checks, rng)
 }
 
-/// Jacobi returns the Jacobi symbol (x/y), either +1, -1, or 0.
-/// The y argument must be an odd integer.
-#[allow(clippy::many_single_char_names)]
-fn jacobi(x: &BigInt, y: &BigInt) -> isize {
-    if !y.is_odd() {
-        panic!(
-            "invalid arguments, y must be an odd integer,but got {:?}",
-            y
-        );
-    }
-
-    let mut a = x.clone();
-    let mut b = y.clone();
-    let mut j = 1;
-
-    if b.is_negative() {
-        if a.is_negative() {
-            j = -1;
-        }
-        b = -b;
-    }
-
-    loop {
-        if b.is_one() {
-            return j;
-        }
-        if a.is_zero() {
-            return 0;
-        }
-
-        a = a.mod_floor(&b);
-
-        let Some(s) = a.trailing_zeros() else {
-            // a == 0
-            return 0;
-        };
-        // a > 0
-
-        // handle factors of 2 in a
-        if s & 1 != 0 {
-            let bmod8 = b.iter_u32_digits().next().unwrap_or(0) & 7;
-            if bmod8 == 3 || bmod8 == 5 {
-                j = -j;
-            }
-        }
-
-        let c = &a >> s; // a = 2^s*c
-
-        // swap numerator and denominator
-        let b_low = b.iter_u32_digits().next().unwrap_or(0);
-        let c_low = c.iter_u32_digits().next().unwrap_or(0);
-        if b_low & c_low & 3 == 3 {
-            j = -j
-        }
-
-        a = b;
-        b = c;
-    }
+/// Strong Lucas probable-prime test with Selfridge's method-A parameters.
+///
+/// This is the Lucas half of the conventional Baillie-PSW test. It chooses
+/// `D = 5, -7, 9, -11, ...`, `P = 1`, and `Q = (1-D)/4`, then checks the
+/// strong Lucas conditions for the odd part of `n + 1`.
+fn strong_lucas_selfridge(n: &BigUint) -> bool {
+    let candidate = if Word::BITS == u64::BITS {
+        BoxedUint::from_words(
+            n.iter_u64_digits()
+                .map(|digit| Word::try_from(digit).expect("a digit fits in a word")),
+        )
+    } else {
+        BoxedUint::from_words(n.iter_u32_digits().map(Word::from))
+    };
+    let candidate = Odd::new(candidate).expect("Lucas candidates are odd");
+    lucas_test(candidate, SelfridgeBase, LucasCheck::Strong).is_probably_prime()
 }
-
 static PRIMES: &[u32] = &[
     3_u32, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89,
     97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191,
@@ -641,16 +484,15 @@ static PRIMES: &[u32] = &[
     17597, 17599, 17609, 17623, 17627, 17657, 17659, 17669, 17681, 17683, 17707, 17713, 17729,
     17737, 17747, 17749, 17761, 17783, 17789, 17791, 17807, 17827, 17837, 17839, 17851, 17863,
 ];
-static TWO: Lazy<BigUint> = Lazy::new(|| BigUint::from(2_u8));
-
 #[cfg(test)]
 mod tests {
     use super::{
         PRIMES, gen_prime, gen_safe_prime, is_prime, is_prime_baillie_psw, is_safe_prime,
-        is_safe_prime_baillie_psw,
+        is_safe_prime_baillie_psw, miller_rabin_base, strong_lucas_selfridge,
     };
     use crate::error::Error;
     use num_bigint::BigUint;
+    use num_integer::Integer;
     use num_traits::Num;
     use rand::rng;
 
@@ -758,5 +600,75 @@ mod tests {
         let n = BigUint::from(18_446_744_073_710_004_191_u128);
         assert!(is_prime(&n, &mut rng));
         assert!(is_prime_baillie_psw(&n, &mut rng));
+    }
+
+    fn is_prime_u32(candidate: u32) -> bool {
+        if candidate < 2 {
+            return false;
+        }
+        let mut divisor = 2;
+        while divisor <= candidate / divisor {
+            if candidate.is_multiple_of(divisor) {
+                return false;
+            }
+            divisor += 1;
+        }
+        true
+    }
+
+    #[test]
+    fn conventional_bpsw_components_match_small_primes() {
+        // Test the two BPSW components directly so the small-prime sieve cannot
+        // hide a Lucas or Miller-Rabin error.
+        for candidate in 3_u32..100_000 {
+            if candidate.is_even() {
+                continue;
+            }
+
+            let n = BigUint::from(candidate);
+            let probable_prime =
+                miller_rabin_base(&n, &BigUint::from(2_u8)) && strong_lucas_selfridge(&n);
+            assert_eq!(
+                probable_prime,
+                is_prime_u32(candidate),
+                "BPSW mismatch for {candidate}"
+            );
+        }
+    }
+
+    #[test]
+    fn lucas_selfridge_known_pseudoprimes() {
+        // Strong Lucas-Selfridge pseudoprimes (OEIS A217255). These exercise
+        // the expected false-positive boundary of the Lucas component alone.
+        const STRONG_LUCAS_PSEUDOPRIMES: &[u32] = &[
+            5459, 5777, 10877, 16109, 18971, 22499, 24569, 25199, 40309, 58519, 75077, 97439,
+        ];
+        for &candidate in STRONG_LUCAS_PSEUDOPRIMES {
+            let n = BigUint::from(candidate);
+            assert!(strong_lucas_selfridge(&n), "Lucas rejected {candidate}");
+            assert!(
+                !miller_rabin_base(&n, &BigUint::from(2_u8)),
+                "base-2 Miller-Rabin accepted {candidate}"
+            );
+        }
+    }
+
+    #[test]
+    fn lucas_rejects_base_two_pseudoprimes_and_squares() {
+        // The first strong base-2 pseudoprimes (OEIS A001262) must be rejected
+        // by the Lucas half of BPSW.
+        const BASE_TWO_PSEUDOPRIMES: &[u32] = &[
+            2047, 3277, 4033, 4681, 8321, 15841, 29341, 42799, 49141, 52633, 65281, 74665, 80581,
+            85489, 88357, 90751,
+        ];
+        for &candidate in BASE_TWO_PSEUDOPRIMES {
+            assert!(
+                !strong_lucas_selfridge(&BigUint::from(candidate)),
+                "Lucas accepted {candidate}"
+            );
+        }
+
+        let square = BigUint::from(65_537_u32).pow(2);
+        assert!(!strong_lucas_selfridge(&square));
     }
 }
