@@ -1,8 +1,8 @@
 //! Error structs
 
 use crate::common::MIN_BIT_LENGTH;
+use core::error;
 use core::{fmt, result};
-use core2::error;
 
 /// Default result struct
 pub type Result = result::Result<num_bigint::BigUint, Error>;
