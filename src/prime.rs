@@ -13,9 +13,14 @@ use crate::error::Result;
 /// `from_rng()` function.
 ///
 /// Note: the `bit_length` MUST be at least 128-bits.
+///
+/// # Errors
+///
+/// Returns an error when `bit_length` is too small or operating-system
+/// randomness is unavailable.
 #[cfg(feature = "getrandom")]
 pub fn new(bit_length: usize) -> Result {
-    from_rng(bit_length, &mut rand_core::UnwrapErr(getrandom::SysRng))
+    crate::common::gen_prime_from_system(bit_length)
 }
 
 /// Test if number is prime by
@@ -23,16 +28,20 @@ pub fn new(bit_length: usize) -> Result {
 /// 1- Trial division by first 2048 primes
 /// 2- Perform log2(bitlength) + 5 rounds of Miller-Rabin
 ///    depending on the number of bits
+///
+/// # Errors
+///
+/// Returns an error when operating-system randomness is unavailable.
 #[cfg(feature = "getrandom")]
-pub fn check(candidate: &num_bigint::BigUint) -> bool {
-    check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
+pub fn check(candidate: &num_bigint::BigUint) -> Result<bool> {
+    crate::common::is_prime_with_system(candidate)
 }
 
 /// Checks if a number is probably prime using the deterministic-base
 /// Baillie-PSW test.
 #[cfg(feature = "getrandom")]
 pub fn strong_check(candidate: &num_bigint::BigUint) -> bool {
-    strong_check_with(candidate, &mut rand_core::UnwrapErr(getrandom::SysRng))
+    crate::common::is_prime_baillie_psw_without_rng(candidate)
 }
 
 #[cfg(all(test, feature = "getrandom"))]
@@ -43,7 +52,7 @@ mod tests {
     fn tests() {
         for bits in &[128, 256, 512, 1024] {
             let n = new(*bits).unwrap();
-            assert!(check(&n));
+            assert!(check(&n).unwrap());
             assert!(strong_check(&n));
         }
     }

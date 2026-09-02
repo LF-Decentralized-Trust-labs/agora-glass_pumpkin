@@ -26,13 +26,13 @@ glass_pumpkin = "2.0"
 ```rust
 use glass_pumpkin::prime;
 
-fn main() {
-    let p = prime::new(1024).unwrap();
-    let q = prime::new(1024).unwrap();
+fn main() -> Result<(), glass_pumpkin::error::Error> {
+    let p = prime::new(1024)?;
+    let q = prime::new(1024)?;
 
-    let n = p * q;
+    let _n = p * q;
 
-    println!("{}", n);
+    Ok(())
 }
 ```
 
@@ -41,13 +41,14 @@ You can also supply any RNG that implements `rand_core::Rng`.
 use glass_pumpkin::prime;
 use rand::rng;
 
-fn main() {
+fn main() -> Result<(), glass_pumpkin::error::Error> {
     let mut rng = rng();
-    let p = prime::from_rng(1024, &mut rng).unwrap();
-    let q = prime::from_rng(1024, &mut rng).unwrap();
+    let p = prime::from_rng(1024, &mut rng)?;
+    let q = prime::from_rng(1024, &mut rng)?;
 
-    let n = p * q;
-    println!("{}", n);
+    let _n = p * q;
+
+    Ok(())
 }
 ```
 
@@ -73,15 +74,12 @@ use glass_pumpkin::prime;
 use glass_pumpkin::safe_prime;
 use num_bigint::BigUint;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let is_prime = prime::check(&BigUint::new([5].to_vec()))?;
+    let is_safe_prime = safe_prime::check(&BigUint::new([7].to_vec()))?;
+    let _results = (is_prime, is_safe_prime);
 
-    if prime::check(&BigUint::new([5].to_vec())) {
-        println!("is prime");
-    }
-
-    if safe_prime::check(&BigUint::new([7].to_vec())) {
-        println!("is safe prime");
-    }
+    Ok(())
 }
 ```
 

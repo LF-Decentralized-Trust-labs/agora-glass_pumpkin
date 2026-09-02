@@ -1,28 +1,21 @@
 //! Error structs
 
 use crate::common::MIN_BIT_LENGTH;
-use core::{fmt, result};
+use core::result;
+use thiserror::Error;
 
 /// Default result struct
-pub type Result = result::Result<num_bigint::BigUint, Error>;
+pub type Result<T = num_bigint::BigUint> = result::Result<T, Error>;
 
 /// Error struct
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
     /// Handles when the bit sizes are too small
+    #[error("The given bit length is too small; must be at least {MIN_BIT_LENGTH}: {0}")]
     BitLength(usize),
-}
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::BitLength(length) => write!(
-                f,
-                "The given bit length is too small; must be at least {}: {}",
-                MIN_BIT_LENGTH, length
-            ),
-        }
-    }
+    /// Handles failures when accessing operating-system randomness.
+    #[cfg(feature = "getrandom")]
+    #[error("Failed to access operating-system randomness: {0}")]
+    Random(#[from] getrandom::Error),
 }
-
-impl core::error::Error for Error {}

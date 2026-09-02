@@ -9,7 +9,7 @@ license = "Apache-2.0"
 name = "glass_pumpkin"
 readme = "README.md"
 repository = "https://github.com/mikelodder7/glass_pumpkin"
-version = "2.0.0-rc0"
+version = "2.0.0-rc1"
 
 [dependencies]
 crypto-bigint = { version = "0.7", default-features = false, features = ["alloc"] }
@@ -19,6 +19,7 @@ num-traits = { version = "0.2", default-features = false }
 num-integer = { version = "0.1", default-features = false }
 rand_core = { version = "0.10" }
 getrandom = { version = "0.4", optional = true, features = ["sys_rng"] }
+thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
@@ -42,3 +43,6 @@ no_std = []
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(cpubits, values("16", "32", "64"))'] }

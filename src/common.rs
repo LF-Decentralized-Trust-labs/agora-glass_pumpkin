@@ -1,4 +1,5 @@
-use crypto_bigint::{BoxedUint, Odd, Word};
+use core::convert::Infallible;
+use crypto_bigint::{BoxedUint, Odd, Uint, nlimbs};
 use crypto_primes::hazmat::{LucasCheck, SelfridgeBase, lucas_test};
 use num_bigint::{BigRng010, BigUint};
 use num_integer::Integer;
@@ -6,27 +7,109 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use crate::error::{Error, Result};
 use rand_core::Rng;
+#[cfg(feature = "getrandom")]
+use rand_core::TryRng;
 
 pub const MIN_BIT_LENGTH: usize = 128;
+
+trait BigUintRng {
+    type Error;
+
+    fn random_biguint(&mut self, bit_length: u64) -> core::result::Result<BigUint, Self::Error>;
+
+    fn random_biguint_below(
+        &mut self,
+        bound: &BigUint,
+    ) -> core::result::Result<BigUint, Self::Error>;
+}
+
+struct InfallibleBigUintRng<'a, R: ?Sized>(&'a mut R);
+
+impl<R: Rng + ?Sized> BigUintRng for InfallibleBigUintRng<'_, R> {
+    type Error = Infallible;
+
+    fn random_biguint(&mut self, bit_length: u64) -> core::result::Result<BigUint, Self::Error> {
+        Ok(self.0.random_biguint(bit_length))
+    }
+
+    fn random_biguint_below(
+        &mut self,
+        bound: &BigUint,
+    ) -> core::result::Result<BigUint, Self::Error> {
+        Ok(self.0.random_biguint_below(bound))
+    }
+}
+
+#[cfg(feature = "getrandom")]
+struct SystemBigUintRng(getrandom::SysRng);
+
+#[cfg(feature = "getrandom")]
+impl BigUintRng for SystemBigUintRng {
+    type Error = getrandom::Error;
+
+    fn random_biguint(&mut self, bit_length: u64) -> core::result::Result<BigUint, Self::Error> {
+        let byte_length = bit_length.div_ceil(8) as usize;
+        let mut bytes = alloc::vec![0_u8; byte_length];
+        self.0.try_fill_bytes(&mut bytes)?;
+
+        let excess_bits = byte_length as u64 * 8 - bit_length;
+        if let Some(last) = bytes.last_mut() {
+            *last &= u8::MAX >> excess_bits;
+        }
+
+        Ok(BigUint::from_bytes_le(&bytes))
+    }
+
+    fn random_biguint_below(
+        &mut self,
+        bound: &BigUint,
+    ) -> core::result::Result<BigUint, Self::Error> {
+        loop {
+            let candidate = self.random_biguint(bound.bits())?;
+            if candidate < *bound {
+                return Ok(candidate);
+            }
+        }
+    }
+}
+
+fn into_infallible<T>(result: core::result::Result<T, Infallible>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => match error {},
+    }
+}
+
+fn validate_bit_length(bit_length: usize) -> Result<()> {
+    if bit_length < MIN_BIT_LENGTH {
+        Err(Error::BitLength(bit_length))
+    } else {
+        Ok(())
+    }
+}
 
 /// Generate a new prime number with size `bit_length`, sourced
 /// from an already-initialized `Rng`
 pub fn gen_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
-    if bit_length < MIN_BIT_LENGTH {
-        Err(Error::BitLength(bit_length))
-    } else {
-        let mut candidate;
-        let checks = required_checks(bit_length);
-        let size = bit_length as u64;
+    validate_bit_length(bit_length)?;
+    let mut rng = InfallibleBigUintRng(rng);
+    Ok(into_infallible(generate_prime(bit_length, &mut rng)))
+}
 
-        loop {
-            candidate = _prime_candidate(size, rng);
+fn generate_prime<R: BigUintRng + ?Sized>(
+    bit_length: usize,
+    rng: &mut R,
+) -> core::result::Result<BigUint, R::Error> {
+    let checks = required_checks(bit_length);
+    let size = bit_length as u64;
 
-            if passes_small_prime_sieve(&candidate, false)
-                && passes_generation_tests(&candidate, checks - 1, rng)
-            {
-                return Ok(candidate);
-            }
+    loop {
+        let candidate = prime_candidate(size, rng)?;
+
+        if passes_small_prime_sieve(&candidate, false)
+            && passes_generation_tests(&candidate, checks - 1, rng)?
+        {
+            return Ok(candidate);
         }
     }
 }
@@ -34,36 +117,51 @@ pub fn gen_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
 /// Generate a new safe prime number with size `bit_length`, sourced
 /// from an already-initialized `Rng`.
 pub fn gen_safe_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
-    if bit_length < MIN_BIT_LENGTH {
-        Err(Error::BitLength(bit_length))
-    } else {
-        let mut q;
-        let mut p = BigUint::zero();
-        let checks = required_checks(bit_length) - 5;
-        let size_m1 = (bit_length - 1) as u64;
+    validate_bit_length(bit_length)?;
+    let mut rng = InfallibleBigUintRng(rng);
+    Ok(into_infallible(generate_safe_prime(bit_length, &mut rng)))
+}
 
-        loop {
-            // Generate candidate for q
-            q = _prime_candidate(size_m1, rng);
+fn generate_safe_prime<R: BigUintRng + ?Sized>(
+    bit_length: usize,
+    rng: &mut R,
+) -> core::result::Result<BigUint, R::Error> {
+    let mut p = BigUint::zero();
+    let checks = required_checks(bit_length) - 5;
+    let size_m1 = (bit_length - 1) as u64;
 
-            // Check that q is congruent to 2 mod 3
-            if (&q % 3u32).to_u32() == Some(2) {
-                // Calculate p = 2q + 1
-                p.clone_from(&q);
-                p <<= 1;
-                p.set_bit(0, true);
+    loop {
+        // Generate candidate for q
+        let q = prime_candidate(size_m1, rng)?;
 
-                // Check p is congruent to 2 mod 3, and check p and q are prime
-                if passes_small_prime_sieve(&q, true)
-                    && passes_small_prime_sieve(&p, false)
-                    && passes_generation_tests(&q, checks - 1, rng)
-                    && passes_generation_tests(&p, checks - 1, rng)
-                {
-                    return Ok(p);
-                }
+        // Check that q is congruent to 2 mod 3
+        if (&q % 3u32).to_u32() == Some(2) {
+            // Calculate p = 2q + 1
+            p.clone_from(&q);
+            p <<= 1;
+            p.set_bit(0, true);
+
+            // Check p is congruent to 2 mod 3, and check p and q are prime
+            if passes_small_prime_sieve(&q, true)
+                && passes_small_prime_sieve(&p, false)
+                && passes_safe_generation_tests(&q, &p, checks - 1, rng)?
+            {
+                return Ok(p);
             }
         }
     }
+}
+
+#[cfg(feature = "getrandom")]
+pub(crate) fn gen_prime_from_system(bit_length: usize) -> Result {
+    validate_bit_length(bit_length)?;
+    generate_prime(bit_length, &mut SystemBigUintRng(getrandom::SysRng)).map_err(Error::from)
+}
+
+#[cfg(feature = "getrandom")]
+pub(crate) fn gen_safe_prime_from_system(bit_length: usize) -> Result {
+    validate_bit_length(bit_length)?;
+    generate_safe_prime(bit_length, &mut SystemBigUintRng(getrandom::SysRng)).map_err(Error::from)
 }
 
 /// Checks if a number is probably prime using the deterministic-base
@@ -71,6 +169,10 @@ pub fn gen_safe_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result
 ///
 /// The RNG parameter is retained for API compatibility and is not consumed.
 pub fn is_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, _rng: &mut R) -> bool {
+    is_prime_baillie_psw_without_rng(candidate)
+}
+
+pub(crate) fn is_prime_baillie_psw_without_rng(candidate: &BigUint) -> bool {
     baillie_psw(candidate, false)
 }
 
@@ -79,6 +181,10 @@ pub fn is_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, _rng: &mut R) 
 ///
 /// The RNG parameter is retained for API compatibility and is not consumed.
 pub fn is_safe_prime_baillie_psw<R: Rng + ?Sized>(candidate: &BigUint, _rng: &mut R) -> bool {
+    is_safe_prime_baillie_psw_without_rng(candidate)
+}
+
+pub(crate) fn is_safe_prime_baillie_psw_without_rng(candidate: &BigUint) -> bool {
     if (candidate % 3_u8).to_u8() != Some(2) {
         return false;
     }
@@ -94,16 +200,28 @@ pub fn is_safe_prime<R: Rng + ?Sized>(candidate: &BigUint, rng: &mut R) -> bool 
 
 /// Common function for `is_safe_prime`
 fn _is_safe_prime<R: Rng + ?Sized>(candidate: &BigUint, checks: usize, rng: &mut R) -> bool {
+    let mut rng = InfallibleBigUintRng(rng);
+    into_infallible(is_safe_prime_with_rng(candidate, checks, &mut rng))
+}
+
+fn is_safe_prime_with_rng<R: BigUintRng + ?Sized>(
+    candidate: &BigUint,
+    checks: usize,
+    rng: &mut R,
+) -> core::result::Result<bool, R::Error> {
     // According to https://eprint.iacr.org/2003/186.pdf
     // a safe prime is congruent to 2 mod 3
     if (candidate % 3_u8).to_u8() == Some(2) {
         // A safe prime satisfies (p-1)/2 is prime. Since a
         // prime is odd, We just need to divide by 2
         let p = &(candidate >> 1);
-        return _is_prime(p, checks, true, rng) && _is_prime(candidate, checks, false, rng);
+        if !is_prime_with_rng(p, checks, true, rng)? {
+            return Ok(false);
+        }
+        return is_prime_with_rng(candidate, checks, false, rng);
     }
 
-    false
+    Ok(false)
 }
 
 /// Test if number is prime by
@@ -127,58 +245,92 @@ fn _is_prime<R: Rng + ?Sized>(
     q_check: bool,
     rng: &mut R,
 ) -> bool {
+    let mut rng = InfallibleBigUintRng(rng);
+    into_infallible(is_prime_with_rng(candidate, checks, q_check, &mut rng))
+}
+
+fn is_prime_with_rng<R: BigUintRng + ?Sized>(
+    candidate: &BigUint,
+    checks: usize,
+    q_check: bool,
+    rng: &mut R,
+) -> core::result::Result<bool, R::Error> {
     if candidate.to_u64() == Some(2) {
-        return true;
+        return Ok(true);
     }
 
     if candidate.is_even() || candidate.is_one() {
-        return false;
+        return Ok(false);
     }
 
     if !passes_small_prime_sieve(candidate, q_check) {
-        return false;
+        return Ok(false);
     }
     if candidate
         .to_u32()
-        .is_some_and(|value| value <= *PRIMES.last().expect("the prime table is not empty"))
+        .is_some_and(|value| value <= MAX_SMALL_PRIME)
     {
-        return true;
+        return Ok(true);
     }
 
     // Finally, do a Miller-Rabin test
     // See https://eprint.iacr.org/2018/749.pdf for good choices on appropriate number of tests
-    if !miller_rabin(candidate, checks, rng) {
-        return false;
+    if !MillerRabin::new(candidate).random_checks(checks, rng)? {
+        return Ok(false);
     }
 
-    true
+    Ok(true)
+}
+
+#[cfg(feature = "getrandom")]
+pub(crate) fn is_prime_with_system(candidate: &BigUint) -> Result<bool> {
+    let checks = required_checks(candidate.bits() as usize);
+    is_prime_with_rng(
+        candidate,
+        checks,
+        false,
+        &mut SystemBigUintRng(getrandom::SysRng),
+    )
+    .map_err(Error::from)
+}
+
+#[cfg(feature = "getrandom")]
+pub(crate) fn is_safe_prime_with_system(candidate: &BigUint) -> Result<bool> {
+    let checks = required_checks(candidate.bits() as usize);
+    is_safe_prime_with_rng(candidate, checks, &mut SystemBigUintRng(getrandom::SysRng))
+        .map_err(Error::from)
 }
 
 /// Generate a random candidate uint of the requested bit length
 #[inline]
-fn _prime_candidate<R: Rng + ?Sized>(bit_length: u64, rng: &mut R) -> BigUint {
-    let mut candidate = rng.random_biguint(bit_length);
+fn prime_candidate<R: BigUintRng + ?Sized>(
+    bit_length: u64,
+    rng: &mut R,
+) -> core::result::Result<BigUint, R::Error> {
+    let mut candidate = rng.random_biguint(bit_length)?;
 
     // Set the endpoints directly. This keeps every odd integer of the requested
     // bit length equally likely; shifting short samples introduced bias.
     candidate.set_bit(0, true);
     candidate.set_bit(bit_length - 1, true);
 
-    candidate
+    Ok(candidate)
 }
 
 /// Compute a small remainder through `num-bigint`'s public arithmetic traits.
 #[inline]
 fn rem_u32(n: &BigUint, modulus: u32) -> u32 {
-    (n % modulus)
-        .to_u32()
-        .expect("a remainder must fit in its modulus")
+    let modulus = u64::from(modulus);
+    let remainder = n.iter_u32_digits().rev().fold(0_u64, |remainder, digit| {
+        ((remainder << 32) | u64::from(digit)) % modulus
+    });
+    remainder as u32
 }
 
 #[inline]
 fn passes_small_prime_sieve(candidate: &BigUint, q_check: bool) -> bool {
     if let Some(small) = candidate.to_u32()
-        && small <= *PRIMES.last().expect("the prime table is not empty")
+        && small <= MAX_SMALL_PRIME
     {
         return small == 2 || PRIMES.binary_search(&small).is_ok();
     }
@@ -186,6 +338,7 @@ fn passes_small_prime_sieve(candidate: &BigUint, q_check: bool) -> bool {
     // Batch adjacent primes into the largest product that fits in a `u32`.
     // This roughly halves the number of big-integer remainder operations while
     // retaining the scalar fast path in `num-bigint`.
+    let use_native_remainder = cfg!(debug_assertions) || candidate.bits() > 6144;
     let mut start = 0;
     while start < PRIMES.len() {
         let mut product = 1_u32;
@@ -198,7 +351,14 @@ fn passes_small_prime_sieve(candidate: &BigUint, q_check: bool) -> bool {
             end += 1;
         }
 
-        let batch_remainder = rem_u32(candidate, product);
+        let batch_remainder = if use_native_remainder {
+            (candidate % product)
+                .iter_u32_digits()
+                .next()
+                .unwrap_or_default()
+        } else {
+            rem_u32(candidate, product)
+        };
         for &prime in &PRIMES[start..end] {
             let remainder = batch_remainder % prime;
             if remainder == 0 || q_check && remainder == (prime - 1) / 2 {
@@ -215,11 +375,6 @@ fn passes_small_prime_sieve(candidate: &BigUint, q_check: bool) -> bool {
 #[inline]
 fn required_checks(bits: usize) -> usize {
     (bits.checked_ilog2().unwrap_or(1) as usize) + 5
-}
-
-/// Perform miller rabin primality tests
-fn miller_rabin<R: Rng + ?Sized>(candidate: &BigUint, limit: usize, rng: &mut R) -> bool {
-    MillerRabin::new(candidate).random_checks(limit, rng)
 }
 
 /// Perform a strong Miller-Rabin probable-prime test with one fixed base.
@@ -239,9 +394,7 @@ struct MillerRabin<'a> {
 impl<'a> MillerRabin<'a> {
     fn new(candidate: &'a BigUint) -> Self {
         let candidate_minus_one = candidate - 1_u8;
-        let trials = candidate_minus_one
-            .trailing_zeros()
-            .expect("n-1 is non-zero");
+        let trials = candidate_minus_one.trailing_zeros().unwrap_or_default();
         let odd_part = &candidate_minus_one >> trials;
         Self {
             candidate,
@@ -271,18 +424,30 @@ impl<'a> MillerRabin<'a> {
         false
     }
 
-    fn random_checks<R: Rng + ?Sized>(&self, limit: usize, rng: &mut R) -> bool {
+    fn passes_bpsw(&self) -> bool {
+        self.check_base_two() && strong_lucas_selfridge(self.candidate)
+    }
+
+    fn check_base_two(&self) -> bool {
+        self.check_base(&BigUint::from(2_u8))
+    }
+
+    fn random_checks<R: BigUintRng + ?Sized>(
+        &self,
+        limit: usize,
+        rng: &mut R,
+    ) -> core::result::Result<bool, R::Error> {
         // Sampling [0, n-3) and adding two produces exactly [2, n-1),
         // without rebuilding that span for every base.
         let basis_span = self.candidate - 3_u8;
         for _ in 0..limit {
-            let basis = rng.random_biguint_below(&basis_span) + 2_u8;
+            let basis = rng.random_biguint_below(&basis_span)? + 2_u8;
             if !self.check_base(&basis) {
-                return false;
+                return Ok(false);
             }
         }
 
-        true
+        Ok(true)
     }
 }
 
@@ -299,7 +464,7 @@ fn baillie_psw(candidate: &BigUint, q_check: bool) -> bool {
     }
     if candidate
         .to_u32()
-        .is_some_and(|value| value <= *PRIMES.last().expect("the prime table is not empty"))
+        .is_some_and(|value| value <= MAX_SMALL_PRIME)
     {
         return true;
     }
@@ -310,21 +475,45 @@ fn baillie_psw(candidate: &BigUint, q_check: bool) -> bool {
 /// Run the two conventional BPSW components after small-factor screening:
 /// a strong base-2 Miller-Rabin test and a strong Lucas-Selfridge test.
 fn baillie_psw_presieved(candidate: &BigUint) -> bool {
-    let miller_rabin = MillerRabin::new(candidate);
-    miller_rabin.check_base(&BigUint::from(2_u8)) && strong_lucas_selfridge(candidate)
+    MillerRabin::new(candidate).passes_bpsw()
 }
 
 /// Run BPSW and the requested additional random Miller-Rabin rounds while
 /// sharing the candidate decomposition between every base.
-fn passes_generation_tests<R: Rng + ?Sized>(
+fn passes_generation_tests<R: BigUintRng + ?Sized>(
     candidate: &BigUint,
     random_checks: usize,
     rng: &mut R,
-) -> bool {
+) -> core::result::Result<bool, R::Error> {
     let miller_rabin = MillerRabin::new(candidate);
-    miller_rabin.check_base(&BigUint::from(2_u8))
-        && strong_lucas_selfridge(candidate)
-        && miller_rabin.random_checks(random_checks, rng)
+    if !miller_rabin.passes_bpsw() {
+        return Ok(false);
+    }
+    miller_rabin.random_checks(random_checks, rng)
+}
+
+/// Screen both safe-prime components with BPSW before running the additional
+/// random Miller-Rabin rounds on either one.
+fn passes_safe_generation_tests<R: BigUintRng + ?Sized>(
+    q: &BigUint,
+    p: &BigUint,
+    random_checks: usize,
+    rng: &mut R,
+) -> core::result::Result<bool, R::Error> {
+    let q_tests = MillerRabin::new(q);
+    if !q_tests.check_base_two() {
+        return Ok(false);
+    }
+
+    let p_tests = MillerRabin::new(p);
+    if !p_tests.check_base_two()
+        || !strong_lucas_selfridge(q)
+        || !strong_lucas_selfridge(p)
+        || !q_tests.random_checks(random_checks, rng)?
+    {
+        return Ok(false);
+    }
+    p_tests.random_checks(random_checks, rng)
 }
 
 /// Strong Lucas probable-prime test with Selfridge's method-A parameters.
@@ -333,16 +522,35 @@ fn passes_generation_tests<R: Rng + ?Sized>(
 /// `D = 5, -7, 9, -11, ...`, `P = 1`, and `Q = (1-D)/4`, then checks the
 /// strong Lucas conditions for the odd part of `n + 1`.
 fn strong_lucas_selfridge(n: &BigUint) -> bool {
-    let candidate = if Word::BITS == u64::BITS {
-        BoxedUint::from_words(
-            n.iter_u64_digits()
-                .map(|digit| Word::try_from(digit).expect("a digit fits in a word")),
-        )
-    } else {
-        BoxedUint::from_words(n.iter_u32_digits().map(Word::from))
-    };
-    let candidate = Odd::new(candidate).expect("Lucas candidates are odd");
-    lucas_test(candidate, SelfridgeBase, LucasCheck::Strong).is_probably_prime()
+    if !cfg!(debug_assertions) {
+        match n.bits().div_ceil(8) {
+            128 => return strong_lucas_fixed::<{ nlimbs(1024) }>(n),
+            256 => return strong_lucas_fixed::<{ nlimbs(2048) }>(n),
+            512 => return strong_lucas_fixed::<{ nlimbs(4096) }>(n),
+            _ => {}
+        }
+    }
+
+    Odd::new(boxed_uint(n))
+        .into_option()
+        .is_some_and(|candidate| {
+            lucas_test(candidate, SelfridgeBase, LucasCheck::Strong).is_probably_prime()
+        })
+}
+
+fn strong_lucas_fixed<const LIMBS: usize>(n: &BigUint) -> bool {
+    Odd::new(Uint::<LIMBS>::from_be_slice(&n.to_bytes_be()))
+        .into_option()
+        .is_some_and(|candidate| {
+            lucas_test(candidate, SelfridgeBase, LucasCheck::Strong).is_probably_prime()
+        })
+}
+
+fn boxed_uint(n: &BigUint) -> BoxedUint {
+    crypto_bigint::cpubits! {
+        16 | 32 => { BoxedUint::from_words(n.iter_u32_digits()) }
+        64 => { BoxedUint::from_words(n.iter_u64_digits()) }
+    }
 }
 static PRIMES: &[u32] = &[
     3_u32, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89,
@@ -484,17 +692,55 @@ static PRIMES: &[u32] = &[
     17597, 17599, 17609, 17623, 17627, 17657, 17659, 17669, 17681, 17683, 17707, 17713, 17729,
     17737, 17747, 17749, 17761, 17783, 17789, 17791, 17807, 17827, 17837, 17839, 17851, 17863,
 ];
+const MAX_SMALL_PRIME: u32 = PRIMES[PRIMES.len() - 1];
 #[cfg(test)]
 mod tests {
     use super::{
-        PRIMES, gen_prime, gen_safe_prime, is_prime, is_prime_baillie_psw, is_safe_prime,
+        BigUintRng, PRIMES, gen_prime, gen_safe_prime, generate_prime, generate_safe_prime,
+        is_prime, is_prime_baillie_psw, is_prime_with_rng, is_safe_prime,
         is_safe_prime_baillie_psw, miller_rabin_base, strong_lucas_selfridge,
     };
     use crate::error::Error;
+    use core::result::Result as CoreResult;
     use num_bigint::BigUint;
     use num_integer::Integer;
     use num_traits::Num;
     use rand::rng;
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct TestRandomError;
+
+    struct FailingBigUintRng;
+
+    impl BigUintRng for FailingBigUintRng {
+        type Error = TestRandomError;
+
+        fn random_biguint(&mut self, _bit_length: u64) -> CoreResult<BigUint, Self::Error> {
+            Err(TestRandomError)
+        }
+
+        fn random_biguint_below(&mut self, _bound: &BigUint) -> CoreResult<BigUint, Self::Error> {
+            Err(TestRandomError)
+        }
+    }
+
+    #[test]
+    fn random_failures_are_propagated() {
+        assert!(matches!(
+            generate_prime(128, &mut FailingBigUintRng),
+            Err(TestRandomError)
+        ));
+        assert!(matches!(
+            generate_safe_prime(128, &mut FailingBigUintRng),
+            Err(TestRandomError)
+        ));
+
+        let candidate = BigUint::from(18_446_744_073_710_004_191_u128);
+        assert!(matches!(
+            is_prime_with_rng(&candidate, 5, false, &mut FailingBigUintRng),
+            Err(TestRandomError)
+        ));
+    }
 
     #[test]
     fn gen_safe_prime_tests() {
@@ -502,6 +748,8 @@ mod tests {
         match gen_prime(16, &mut rng) {
             Ok(_) => panic!("No primes allowed under 16 bits"),
             Err(Error::BitLength(l)) => assert_eq!(l, 16),
+            #[cfg(feature = "getrandom")]
+            Err(Error::Random(error)) => panic!("Unexpected random error: {error}"),
         };
 
         for bits in &[128, 256, 384, 512] {
@@ -517,6 +765,8 @@ mod tests {
         match gen_prime(16, &mut rng) {
             Ok(_) => panic!("No primes allowed under 16 bits"),
             Err(Error::BitLength(l)) => assert_eq!(l, 16),
+            #[cfg(feature = "getrandom")]
+            Err(Error::Random(error)) => panic!("Unexpected random error: {error}"),
         };
 
         for bits in &[256, 512, 1024, 2048] {
@@ -534,7 +784,7 @@ mod tests {
         }
 
         let mut n = BigUint::from(18_088_387_217_903_330_459_u64);
-        assert!(!is_prime(&(n.clone() >> 1), &mut rng));
+        assert!(!is_prime(&(&n >> 1), &mut rng));
         assert!(is_prime_baillie_psw(&n, &mut rng));
         for _ in 0..5 {
             n <<= 1;
@@ -544,7 +794,7 @@ mod tests {
         }
 
         n = BigUint::from_str_radix("33376463607021642560387296949", 10).unwrap();
-        assert!(!is_prime(&(n.clone() >> 1), &mut rng));
+        assert!(!is_prime(&(&n >> 1), &mut rng));
         assert!(is_prime_baillie_psw(&n, &mut rng));
         for _ in 0..5 {
             n <<= 1;
@@ -553,7 +803,7 @@ mod tests {
         }
 
         n = BigUint::from_str_radix("170141183460469231731687303717167733089", 10).unwrap();
-        assert!(!is_prime(&(n.clone() >> 1), &mut rng));
+        assert!(!is_prime(&(&n >> 1), &mut rng));
         assert!(is_prime_baillie_psw(&n, &mut rng));
         for _ in 0..5 {
             n <<= 1;
@@ -566,7 +816,7 @@ mod tests {
             10,
         )
         .unwrap();
-        assert!(!is_prime(&(n.clone() >> 1), &mut rng));
+        assert!(!is_prime(&(&n >> 1), &mut rng));
         assert!(is_prime_baillie_psw(&n, &mut rng));
         for _ in 0..4 {
             n <<= 1;
@@ -575,7 +825,7 @@ mod tests {
         }
 
         n = BigUint::from_str_radix("1675975991242824637446753124775730765934920727574049172215445180465220503759193372100234287270862928461253982273310756356719235351493321243304213304923049", 10).unwrap();
-        assert!(!is_prime(&(n.clone() >> 1), &mut rng));
+        assert!(!is_prime(&(&n >> 1), &mut rng));
         assert!(is_prime(&n, &mut rng));
         for _ in 0..4 {
             n <<= 1;
@@ -584,7 +834,7 @@ mod tests {
         }
         n = BigUint::from_str_radix("153739637779647327330155094463476939112913405723627932550795546376536722298275674187199768137486929460478138431076223176750734095693166283451594721829574797878338183845296809008576378039501400850628591798770214582527154641716248943964626446190042367043984306973709604255015629102866732543697075866901827761489", 10).unwrap();
 
-        assert!(!is_prime(&(n.clone() >> 1), &mut rng));
+        assert!(!is_prime(&(&n >> 1), &mut rng));
         assert!(is_prime_baillie_psw(&n, &mut rng));
         for _ in 0..3 {
             n <<= 1;
