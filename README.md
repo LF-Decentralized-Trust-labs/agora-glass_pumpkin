@@ -3,7 +3,7 @@
 [![Build Status][build-image]][build-link]
 [![Crate][crate-image]][crate-link]
 [![Docs][docs-image]][docs-link]
-![Apache 2.0/MIT Licensed][license-image]
+![MIT OR Apache-2.0][license-badge]
 
 A random number generator for generating large prime numbers, suitable for cryptography.
 
@@ -98,4 +98,4 @@ This crate is part of the Hyperledger Labs Agora Project.
 [crate-link]: https://crates.io/crates/glass_pumpkin
 [docs-image]: https://docs.rs/glass_pumpkin/badge.svg
 [docs-link]: https://docs.rs/glass_pumpkin/
-[license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
+[license-badge]: https://img.shields.io/badge/license-MIT/Apache2.0-blue.svg

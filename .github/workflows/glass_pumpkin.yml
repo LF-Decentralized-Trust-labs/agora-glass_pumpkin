@@ -4,16 +4,19 @@ on:
   pull_request:
     paths-ignore:
       - README.md
-      - LICENSE
+      - COPYING
+      - LICENSE-APACHE
+      - LICENSE-MIT
       - MAINTAINERS.md
       - rustfmt.toml
   push:
     branches: main
     paths-ignore:
       - README.md
-      - LICENSE
+      - LICENSE-APACHE
+      - LICENSE-MIT
       - MAINTAINERS.md
-      - rustfmt.toml
+      - rustfmt.tom
 
 env:
   CARGO_INCREMENTAL: 0
