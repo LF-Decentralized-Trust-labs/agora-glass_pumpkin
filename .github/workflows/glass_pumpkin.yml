@@ -16,7 +16,7 @@ on:
       - LICENSE-APACHE
       - LICENSE-MIT
       - MAINTAINERS.md
-      - rustfmt.tom
+      - rustfmt.toml
 
 env:
   CARGO_INCREMENTAL: 0
