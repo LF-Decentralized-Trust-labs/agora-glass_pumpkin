@@ -1,16 +1,16 @@
-//! Error structs
+//! Errors returned during prime generation and checking.
 
 use crate::common::MIN_BIT_LENGTH;
 use core::result;
 use thiserror::Error;
 
-/// Default result struct
+/// A result returned by fallible crate operations.
 pub type Result<T = num_bigint::BigUint> = result::Result<T, Error>;
 
-/// Error struct
+/// An error returned during prime generation or checking.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// Handles when the bit sizes are too small
+    /// The requested bit length is smaller than the supported minimum.
     #[error("The given bit length is too small; must be at least {MIN_BIT_LENGTH}: {0}")]
     BitLength(usize),
 

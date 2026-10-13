@@ -9,8 +9,8 @@ use crate::error::Result;
 
 /// Constructs a new prime number with a size of `bit_length` bits.
 ///
-/// This will initialize a `getrandom::SysRng` instance and call the
-/// `from_rng()` function.
+/// This uses [`getrandom::SysRng`] as the entropy source and the same prime
+/// generation pipeline as [`from_rng`].
 ///
 /// Note: the `bit_length` MUST be at least 128-bits.
 ///

@@ -89,7 +89,7 @@ fn validate_bit_length(bit_length: usize) -> Result<()> {
 }
 
 /// Generate a new prime number with size `bit_length`, sourced
-/// from an already-initialized `Rng`
+/// from an already-initialized [`rand_core::Rng`].
 pub fn gen_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
     validate_bit_length(bit_length)?;
     let mut rng = InfallibleBigUintRng(rng);
@@ -115,7 +115,7 @@ fn generate_prime<R: BigUintRng + ?Sized>(
 }
 
 /// Generate a new safe prime number with size `bit_length`, sourced
-/// from an already-initialized `Rng`.
+/// from an already-initialized [`rand_core::Rng`].
 pub fn gen_safe_prime<R: Rng + ?Sized>(bit_length: usize, rng: &mut R) -> Result {
     validate_bit_length(bit_length)?;
     let mut rng = InfallibleBigUintRng(rng);

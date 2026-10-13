@@ -7,7 +7,8 @@
 
 A random number generator for generating large prime numbers, suitable for cryptography.
 
-# Purpose
+## Purpose
+
 `glass_pumpkin` is a cryptographically-secure, random number generator, useful for generating large prime numbers.
 This library is inspired by [pumpkin](https://github.com/zcdziura/pumpkin) except its meant to be used with rust stable.
 It also lowers the 512-bit restriction to 128-bits so these can be generated and used for elliptic curve prime fields.
@@ -16,13 +17,39 @@ This crate uses [num-bigint](https://crates.io/crates/num-bigint) instead of `ra
 `num-bigint` to be just as fast as `ramp` for generating primes. On average, generating primes takes less
 than 200ms and safe primes about 10 seconds on modern hardware.
 
-# Installation
+## Installation
+
 Add the following to your `Cargo.toml` file:
+
 ```toml
 glass_pumpkin = "2.0"
 ```
 
-# Example
+Version 2.0 requires Rust 1.88 or newer. See the
+[changelog](https://github.com/LF-Decentralized-Trust-labs/agora-glass_pumpkin/blob/main/CHANGELOG.md)
+for breaking changes and migration guidance from 1.x.
+
+## Features
+
+The default features are `std` and `getrandom`:
+
+- `getrandom` enables the `new`, `check`, and `strong_check` convenience APIs in
+  the `prime` and `safe_prime` modules. The `new` and `check` functions obtain
+  randomness from the operating system.
+- `std` and `no_std` are compatibility markers. The library itself is always
+  compiled with `#![no_std]` and uses `alloc`.
+
+For a `no_std` consumer that supplies its own RNG, disable the default features:
+
+```toml
+glass_pumpkin = { version = "2.0", default-features = false, features = ["no_std"] }
+```
+
+Use `from_rng`, `check_with`, and `strong_check_with` when supplying an
+implementation of `rand_core::Rng` directly.
+
+## Example
+
 ```rust
 use glass_pumpkin::prime;
 
@@ -37,6 +64,7 @@ fn main() -> Result<(), glass_pumpkin::error::Error> {
 ```
 
 You can also supply any RNG that implements `rand_core::Rng`.
+
 ```rust
 use glass_pumpkin::prime;
 use rand::rng;
@@ -52,23 +80,24 @@ fn main() -> Result<(), glass_pumpkin::error::Error> {
 }
 ```
 
-# Prime Generation
+## Prime Generation
 
 `Primes` are generated similarly to OpenSSL except it applies some recommendations from the [Prime and Prejudice](https://eprint.iacr.org/2018/749.pdf) paper and uses
 the Baillie-PSW method:
 
 1. Generate a random odd number of a given bit-length.
 1. Divide the candidate by the first 2048 prime numbers. This helps to
-    eliminate certain cases that pass Miller-Rabin but are not prime.
+   eliminate certain cases that pass Miller-Rabin but are not prime.
 1. Run the conventional Baillie-PSW test: a strong base-2 Miller-Rabin test
    followed by a strong Lucas test using Selfridge's method-A parameters.
 1. Run log2(bitlength) + 4 additional Miller-Rabin tests with random bases.
 
 Safe primes require (n-1)/2 also be prime.
 
-# Prime Checking
+## Prime Checking
 
 You can use this crate to check numbers for primality.
+
 ```rust
 use glass_pumpkin::prime;
 use glass_pumpkin::safe_prime;
@@ -88,7 +117,8 @@ available through the `strong_check` methods in the `prime` and `safe_prime`
 modules. Prime generation uses the same test and follows it with the additional
 random Miller-Rabin rounds described above.
 
-This crate is part of the Hyperledger Labs Agora Project.
+This crate is part of the [LF Decentralized Trust Labs Agora
+project](https://github.com/LF-Decentralized-Trust-labs/agora).
 
 [//]: # (badges)
 

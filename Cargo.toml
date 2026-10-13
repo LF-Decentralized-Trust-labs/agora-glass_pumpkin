@@ -8,8 +8,9 @@ keywords = ["prime", "big", "cryptography", "generator", "number"]
 license = "MIT OR Apache-2.0"
 name = "glass_pumpkin"
 readme = "README.md"
-repository = "https://github.com/mikelodder7/glass_pumpkin"
-version = "2.0.0-rc1"
+repository = "https://github.com/LF-Decentralized-Trust-labs/agora-glass_pumpkin"
+rust-version = "1.88"
+version = "2.0.0"
 
 [dependencies]
 crypto-bigint = { version = "0.7", default-features = false, features = ["alloc"] }
@@ -34,10 +35,11 @@ opt-level = 3
 
 [features]
 default = ["std", "getrandom"]
+# Compatibility marker; the crate itself is always `no_std`.
 std = []
 # Enables methods that use `getrandom::SysRng` internally
 getrandom = ["dep:getrandom"]
-# Enables compilation in `no_std` environment
+# Compatibility marker for consumers selecting a `no_std` configuration.
 no_std = []
 
 [package.metadata.docs.rs]
